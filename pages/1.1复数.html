@@ -442,45 +442,103 @@ const editToggle=document.getElementById('editToggle'),hotzone=document.querySel
 </script>
 <script src="../assets/three.global.min.js"></script>
 <script>
-/* 只保留当前幻灯片的 WebGL 上下文，避免浏览器超过数量限制 */
+/* WebGL 懒加载：只为当前幻灯片创建渲染器 */
 const NativeWebGLRenderer = THREE.WebGLRenderer;
 
-THREE.WebGLRenderer = class extends NativeWebGLRenderer {
+THREE.WebGLRenderer = class {
     constructor(options = {}) {
-        super(options);
+        this.domElement = options.canvas || document.createElement('canvas');
+        this.options = { ...options, canvas: this.domElement };
+        this.nativeRenderer = null;
+        this.pixelRatio = 1;
+        this.clearColor = [0x000000, 0];
+        this.renderSize = [
+            this.domElement.clientWidth || 1,
+            this.domElement.clientHeight || 1,
+            false
+        ];
+        this.savedOutputColorSpace = null;
+    }
 
+    isActive() {
         const slide = this.domElement.closest('.slide');
-        if (!slide) return;
+        return !slide || slide.classList.contains('active');
+    }
 
-        let suspended = false;
+    createRenderer() {
+        if (!this.nativeRenderer) {
+            this.nativeRenderer = new NativeWebGLRenderer(this.options);
+            this.nativeRenderer.setPixelRatio(this.pixelRatio);
+            this.nativeRenderer.setClearColor(...this.clearColor);
+            this.nativeRenderer.setSize(...this.renderSize);
 
-        const syncContext = () => {
-            const active = slide.classList.contains('active');
-
-            if (active && suspended) {
-                this.forceContextRestore();
-                suspended = false;
-            } else if (!active && !suspended) {
-                this.forceContextLoss();
-                suspended = true;
+            if (this.savedOutputColorSpace !== null) {
+                this.nativeRenderer.outputColorSpace =
+                    this.savedOutputColorSpace;
             }
-        };
+        }
 
-        this.domElement.addEventListener('webglcontextlost', event => {
-            event.preventDefault();
-            suspended = true;
-        }, false);
+        return this.nativeRenderer;
+    }
 
-        this.domElement.addEventListener('webglcontextrestored', () => {
-            suspended = false;
-        }, false);
+    releaseRenderer() {
+        if (this.nativeRenderer) {
+            this.nativeRenderer.dispose();
+            this.nativeRenderer.forceContextLoss();
+            this.nativeRenderer = null;
+        }
+    }
 
-        new MutationObserver(syncContext).observe(slide, {
-            attributes: true,
-            attributeFilter: ['class']
-        });
+    setPixelRatio(value) {
+        this.pixelRatio = value;
+        this.nativeRenderer?.setPixelRatio(value);
+    }
 
-        syncContext();
+    setClearColor(color, alpha) {
+        this.clearColor = [color, alpha];
+        this.nativeRenderer?.setClearColor(color, alpha);
+    }
+
+    setSize(width, height, updateStyle = true) {
+        this.renderSize = [width, height, updateStyle];
+        this.nativeRenderer?.setSize(width, height, updateStyle);
+    }
+
+    render(scene, camera) {
+        if (!this.isActive()) {
+            this.releaseRenderer();
+            return;
+        }
+
+        this.createRenderer().render(scene, camera);
+    }
+
+    set outputColorSpace(value) {
+        this.savedOutputColorSpace = value;
+
+        if (this.nativeRenderer) {
+            this.nativeRenderer.outputColorSpace = value;
+        }
+    }
+
+    get outputColorSpace() {
+        return this.nativeRenderer
+            ? this.nativeRenderer.outputColorSpace
+            : this.savedOutputColorSpace;
+    }
+
+    dispose() {
+        this.releaseRenderer();
+    }
+
+    forceContextLoss() {
+        this.releaseRenderer();
+    }
+
+    forceContextRestore() {
+        if (this.isActive()) {
+            this.createRenderer();
+        }
     }
 };
 </script>
